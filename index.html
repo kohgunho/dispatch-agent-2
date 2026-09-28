@@ -1,0 +1,152 @@
+
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>당일 물량 등록 V2</title>
+<style>
+*{box-sizing:border-box} body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#f4f7fb;color:#172033}
+header{background:linear-gradient(135deg,#0f172a,#1e3a8a);color:white;padding:22px}
+.wrap{max-width:1180px;margin:auto;padding:20px}.top{display:flex;justify-content:space-between;gap:12px;align-items:center}
+.card{background:white;border-radius:14px;padding:20px;margin-bottom:16px;box-shadow:0 3px 14px #00000010}
+h1{margin:0 0 5px;font-size:25px} h2{margin:0 0 16px;font-size:19px;color:#1e3a8a}
+.muted{color:#64748b;font-size:13px}.grid{display:grid;grid-template-columns:repeat(2,1fr);gap:14px}
+label{display:block;font-size:13px;font-weight:700;margin-bottom:6px;color:#334155}
+input,select{width:100%;padding:12px;border:1px solid #cbd5e1;border-radius:9px;font-size:15px}
+button{border:0;border-radius:9px;padding:11px 16px;font-weight:700;cursor:pointer;background:#1e3a8a;color:white}
+button.secondary{background:#64748b}.tabs{display:flex;gap:8px;margin-bottom:16px}.tabs button{background:#e2e8f0;color:#334155}.tabs button.active{background:#1e3a8a;color:white}
+.tab{display:none}.tab.active{display:block}.metric{font-size:30px;font-weight:800;color:#1e3a8a}.status{padding:5px 8px;border-radius:20px;font-size:12px;font-weight:700;background:#dcfce7;color:#166534}
+table{width:100%;border-collapse:collapse}th,td{padding:11px;border-bottom:1px solid #e2e8f0;text-align:left;font-size:13px}th{background:#f8fafc;color:#475569}
+.notice{padding:12px;border-radius:9px;background:#eff6ff;color:#1e40af;margin-bottom:14px}.danger{background:#fee2e2;color:#991b1b}.ok{background:#dcfce7;color:#166534}
+.right{text-align:right}.hidden{display:none!important}
+@media(max-width:700px){.grid{grid-template-columns:1fr}.wrap{padding:12px}.top{align-items:flex-start;flex-direction:column}table{min-width:700px}}
+</style>
+</head>
+<body>
+<header><div class="wrap" style="padding:0"><div class="top"><div><h1>당일 물량 등록 V2</h1><div style="opacity:.8;font-size:13px">현장 직접 입력 · 권한별 조회</div></div><div id="who"></div></div></div></header>
+<div class="wrap">
+  <div class="card" id="loginCard">
+    <h2>POC 로그인</h2>
+    <div class="notice">현재 버전은 화면/권한 동작 검증용입니다. 실제 운영 시 로그인·권한은 서버에서 검증해야 합니다.</div>
+    <div class="grid">
+      <div><label>사용자</label><select id="loginUser"></select></div>
+      <div style="display:flex;align-items:end"><button onclick="login()">접속</button></div>
+    </div>
+  </div>
+
+  <div id="app" class="hidden">
+    <div class="tabs">
+      <button id="tabInputBtn" class="active" onclick="tab('input')">물량 등록</button>
+      <button id="tabDashBtn" onclick="tab('dash')">현황</button>
+      <button id="tabHistoryBtn" onclick="tab('history')">변경 이력</button>
+      <button class="secondary" onclick="logout()">사용자 변경</button>
+    </div>
+
+    <section id="input" class="tab active">
+      <div class="card">
+        <h2>오늘 예상물량 등록</h2>
+        <div class="grid">
+          <div><label>기준일</label><input id="date" type="date"></div>
+          <div><label>소속</label><input id="siteDisplay" disabled></div>
+          <div><label>현재 등록값</label><div id="current" class="metric">미입력</div><div id="currentMeta" class="muted"></div></div>
+          <div><label>예상 물량</label><input id="volume" type="number" min="0" step="1" placeholder="예: 13500"></div>
+          <div><label>변경 사유 (선택)</label>
+            <select id="reason"><option value="">선택 안 함</option><option>물량 증가</option><option>물량 감소</option><option>고객사 변경</option><option>오입력 정정</option><option>기타</option></select>
+          </div>
+          <div style="display:flex;align-items:end"><button style="width:100%" onclick="saveVolume()">물량 등록</button></div>
+        </div>
+        <div id="msg" style="margin-top:14px"></div>
+      </div>
+    </section>
+
+    <section id="dash" class="tab">
+      <div class="card">
+        <div class="top"><div><h2>당일 물량 현황</h2><div id="scopeText" class="muted"></div></div><div><input id="dashDate" type="date" onchange="renderDashboard()"></div></div>
+        <div id="summary" style="margin:16px 0"></div>
+        <div style="overflow:auto"><table><thead><tr><th>지사</th><th>거점/집배점</th><th>최초</th><th>최신</th><th>증감</th><th>최종 수정</th><th>등록자</th></tr></thead><tbody id="dashBody"></tbody></table></div>
+      </div>
+    </section>
+
+    <section id="history" class="tab">
+      <div class="card"><h2>변경 이력</h2><div class="muted" style="margin-bottom:12px">권한 범위 내 이력만 표시됩니다.</div>
+        <div style="overflow:auto"><table><thead><tr><th>일시</th><th>기준일</th><th>지사</th><th>거점</th><th>물량</th><th>사유</th><th>등록자</th></tr></thead><tbody id="historyBody"></tbody></table></div>
+      </div>
+    </section>
+  </div>
+</div>
+<script>
+const USERS=[
+ {id:'site01',name:'김현장',role:'SITE',branch:'분당지사',site:'야탑집배점'},
+ {id:'site02',name:'이현장',role:'SITE',branch:'분당지사',site:'정자집배점'},
+ {id:'site03',name:'박현장',role:'SITE',branch:'용인지사',site:'수지집배점'},
+ {id:'branch01',name:'김수빈',role:'BRANCH',branch:'분당지사',site:null},
+ {id:'cjl01',name:'CJL 담당자',role:'CJL',branch:null,site:null}
+];
+const SITES=[
+ {branch:'분당지사',site:'야탑집배점'},{branch:'분당지사',site:'정자집배점'},
+ {branch:'분당지사',site:'서현집배점'},{branch:'용인지사',site:'수지집배점'},
+ {branch:'용인지사',site:'기흥집배점'}
+];
+let user=null;
+const $=id=>document.getElementById(id);
+const today=()=>{const d=new Date();return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0')};
+const fmt=n=>Number(n).toLocaleString('ko-KR');
+function records(){return JSON.parse(localStorage.getItem('dispatch_v2_records')||'[]')}
+function put(r){localStorage.setItem('dispatch_v2_records',JSON.stringify(r))}
+function init(){
+ $('loginUser').innerHTML=USERS.map(u=>`<option value="${u.id}">${u.name} · ${u.role}${u.branch?' · '+u.branch:''}${u.site?' · '+u.site:''}</option>`).join('');
+ $('date').value=today(); $('dashDate').value=today();
+}
+function login(){
+ user=USERS.find(u=>u.id===$('loginUser').value); $('loginCard').classList.add('hidden');$('app').classList.remove('hidden');
+ $('who').textContent=`${user.name} · ${user.role}`;
+ $('siteDisplay').value=user.role==='SITE'?`${user.branch} / ${user.site}`:(user.role==='BRANCH'?`${user.branch} 담당자`:'CJL 전체 담당자');
+ $('tabInputBtn').style.display=user.role==='SITE'?'':'none';
+ tab(user.role==='SITE'?'input':'dash'); refreshCurrent(); renderDashboard();renderHistory();
+}
+function logout(){user=null;$('app').classList.add('hidden');$('loginCard').classList.remove('hidden');$('who').textContent=''}
+function tab(n){document.querySelectorAll('.tab').forEach(x=>x.classList.remove('active'));document.querySelectorAll('.tabs button').forEach(x=>x.classList.remove('active'));$(n).classList.add('active'); const b=$('tab'+n[0].toUpperCase()+n.slice(1)+'Btn'); if(b)b.classList.add('active'); if(n==='dash')renderDashboard();if(n==='history')renderHistory()}
+function allowed(r){
+ if(user.role==='CJL')return true;
+ if(user.role==='BRANCH')return r.branch===user.branch;
+ return r.userId===user.id; // 현장 사용자는 '본인이 올린 데이터만'
+}
+function refreshCurrent(){
+ if(!user||user.role!=='SITE')return;
+ const rs=records().filter(r=>r.userId===user.id&&r.date===$('date').value).sort((a,b)=>a.createdAt.localeCompare(b.createdAt));
+ if(!rs.length){$('current').textContent='미입력';$('currentMeta').textContent='';return}
+ const x=rs[rs.length-1];$('current').textContent=fmt(x.volume)+'건';$('currentMeta').textContent=`${new Date(x.createdAt).toLocaleString('ko-KR')} · ${x.userName}`;
+}
+$('date').addEventListener('change',refreshCurrent);
+function saveVolume(){
+ if(user.role!=='SITE')return;
+ const v=Number($('volume').value); if(!Number.isFinite(v)||v<0){$('msg').innerHTML='<div class="notice danger">올바른 물량을 입력해주세요.</div>';return}
+ const rs=records(); rs.push({id:crypto.randomUUID?crypto.randomUUID():String(Date.now()),date:$('date').value,branch:user.branch,site:user.site,volume:v,reason:$('reason').value,userId:user.id,userName:user.name,createdAt:new Date().toISOString()});put(rs);
+ $('msg').innerHTML=`<div class="notice ok">✓ ${user.site} ${fmt(v)}건이 등록되었습니다.</div>`;$('volume').value='';refreshCurrent();renderDashboard();renderHistory();
+}
+function visibleSites(){
+ if(user.role==='CJL')return SITES;
+ if(user.role==='BRANCH')return SITES.filter(s=>s.branch===user.branch);
+ return SITES.filter(s=>s.site===user.site && s.branch===user.branch);
+}
+function renderDashboard(){
+ if(!user)return; const d=$('dashDate').value; const all=records().filter(r=>r.date===d&&allowed(r));
+ $('scopeText').textContent=user.role==='CJL'?'전체 지사':user.role==='BRANCH'?`${user.branch} 소속 전체`:'내가 등록한 내용';
+ const sites=visibleSites(); let rows=[]; let total=0,done=0;
+ sites.forEach(s=>{
+   let rs=all.filter(r=>r.branch===s.branch&&r.site===s.site).sort((a,b)=>a.createdAt.localeCompare(b.createdAt));
+   if(!rs.length){rows.push(`<tr><td>${s.branch}</td><td>${s.site}</td><td>-</td><td><b>미입력</b></td><td>-</td><td>-</td><td>-</td></tr>`);return}
+   const f=rs[0],l=rs[rs.length-1],ch=l.volume-f.volume; total+=l.volume;done++;
+   rows.push(`<tr><td>${s.branch}</td><td>${s.site}</td><td>${fmt(f.volume)}</td><td><b>${fmt(l.volume)}</b></td><td>${ch>0?'+':''}${fmt(ch)}</td><td>${new Date(l.createdAt).toLocaleTimeString('ko-KR',{hour:'2-digit',minute:'2-digit'})}</td><td>${l.userName}</td></tr>`);
+ });
+ $('summary').innerHTML=`<div class="grid"><div class="notice"><b>입력 완료</b><br><span class="metric">${done}/${sites.length}</span></div><div class="notice"><b>최신 합계</b><br><span class="metric">${fmt(total)}건</span></div></div>`;
+ $('dashBody').innerHTML=rows.join('');
+}
+function renderHistory(){
+ if(!user)return; const rs=records().filter(allowed).sort((a,b)=>b.createdAt.localeCompare(a.createdAt));
+ $('historyBody').innerHTML=rs.length?rs.map(r=>`<tr><td>${new Date(r.createdAt).toLocaleString('ko-KR')}</td><td>${r.date}</td><td>${r.branch}</td><td>${r.site}</td><td>${fmt(r.volume)}</td><td>${r.reason||'-'}</td><td>${r.userName}</td></tr>`).join(''):'<tr><td colspan="7">이력이 없습니다.</td></tr>';
+}
+init();
+</script>
+</body></html>
