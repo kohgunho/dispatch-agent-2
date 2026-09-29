@@ -4,7 +4,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>당일 물량 등록 V2</title>
+<title>당일 물량 통합관리 PoC</title>
 <style>
 *{box-sizing:border-box} body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#f4f7fb;color:#172033}
 header{background:linear-gradient(135deg,#0f172a,#1e3a8a);color:white;padding:22px}
@@ -20,11 +20,16 @@ button.secondary{background:#64748b}.tabs{display:flex;gap:8px;margin-bottom:16p
 table{width:100%;border-collapse:collapse}th,td{padding:11px;border-bottom:1px solid #e2e8f0;text-align:left;font-size:13px}th{background:#f8fafc;color:#475569}
 .notice{padding:12px;border-radius:9px;background:#eff6ff;color:#1e40af;margin-bottom:14px}.danger{background:#fee2e2;color:#991b1b}.ok{background:#dcfce7;color:#166534}
 .right{text-align:right}.hidden{display:none!important}
+.filters{display:grid;grid-template-columns:1.4fr 1fr 1fr;gap:10px;margin:12px 0 16px}
+.badge{display:inline-block;padding:4px 8px;border-radius:999px;font-size:11px;font-weight:800;white-space:nowrap}
+.badge.closed{background:#dbeafe;color:#1d4ed8}.badge.late{background:#ffedd5;color:#9a3412}.badge.pending{background:#fef3c7;color:#92400e}.badge.missing{background:#fee2e2;color:#991b1b}
+.abnormal{font-weight:800;color:#b91c1c}.late-row{background:#fff7ed}
+@media(max-width:700px){.filters{grid-template-columns:1fr}}
 @media(max-width:700px){.grid{grid-template-columns:1fr}.wrap{padding:12px}.top{align-items:flex-start;flex-direction:column}table{min-width:700px}}
 </style>
 </head>
 <body>
-<header><div class="wrap" style="padding:0"><div class="top"><div><h1>당일 물량 등록 V2</h1><div style="opacity:.8;font-size:13px">현장 직접 입력 · 권한별 조회</div></div><div id="who"></div></div></div></header>
+<header><div class="wrap" style="padding:0"><div class="top"><div><h1>당일 물량 통합관리 PoC</h1><div style="opacity:.8;font-size:13px">집배점/고객사 직접 입력 · 관리자 통합현황 · Sub별 배차예측 비교</div></div><div id="who"></div></div></div></header>
 <div class="wrap">
   <div class="card" id="loginCard">
     <h2>POC 로그인</h2>
@@ -38,6 +43,7 @@ table{width:100%;border-collapse:collapse}th,td{padding:11px;border-bottom:1px s
   <div id="app" class="hidden">
     <div class="tabs">
       <button id="tabInputBtn" class="active" onclick="tab('input')">물량 등록</button>
+<button id="myHistoryTabBtn" onclick="tab('myHistory');renderMyHistory()">내 입력 현황</button>
       <button id="tabDashBtn" onclick="tab('dash')">현황</button>
       <button id="tabHistoryBtn" onclick="tab('history')">변경 이력</button>
       <button class="secondary" onclick="logout()">사용자 변경</button>
@@ -45,9 +51,9 @@ table{width:100%;border-collapse:collapse}th,td{padding:11px;border-bottom:1px s
 
     <section id="input" class="tab active">
       <div class="card">
-        <h2>오늘 예상물량 등록</h2>
+        <h2>오늘 물량 등록</h2>
         <div class="grid">
-          <div><label>기준일</label><input id="date" type="date"></div>
+          <div><label>기준일</label><input id="date" type="date" onchange="refreshCurrent()"></div>
           <div><label>소속</label><input id="siteDisplay" disabled></div>
           <div><label>현재 등록값</label><div id="current" class="metric">미입력</div><div id="currentMeta" class="muted"></div></div>
           <div><label>예상 물량</label><input id="volume" type="number" min="0" step="1" placeholder="예: 13500"></div>
@@ -56,15 +62,48 @@ table{width:100%;border-collapse:collapse}th,td{padding:11px;border-bottom:1px s
           </div>
           <div style="display:flex;align-items:end"><button style="width:100%" onclick="saveVolume()">물량 등록</button></div>
         </div>
-        <div id="msg" style="margin-top:14px"></div>
+        <div id="msg" style="margin-top:14px"></div><div class="muted" style="margin-top:8px">※ 집배점/고객사 담당자는 본인 입력처의 당일 물량을 등록하고, ‘내 입력 현황’에서 일자별 등록 내역을 확인할 수 있습니다. 마감 이후 변경 입력도 가능하며 상위 관리 화면에서 ‘마감 후 변경’으로 구분됩니다.</div>
       </div>
     </section>
 
-    <section id="dash" class="tab">
+    <section id="myHistory" class="tab">
+  <div class="card">
+    <div class="top">
+      <div><h2>내 입력 현황</h2><div class="muted">내 집배점/고객사에 등록한 일자별 물량을 확인합니다.</div></div>
+    </div>
+    <div style="overflow:auto;margin-top:14px">
+      <table>
+        <thead><tr><th>기준일</th><th>입력 물량</th><th>변경 사유</th><th>등록 시각</th><th>구분</th></tr></thead>
+        <tbody id="myHistoryBody"></tbody>
+      </table>
+    </div>
+  </div>
+</section>
+<section id="dash" class="tab">
       <div class="card">
         <div class="top"><div><h2>당일 물량 현황</h2><div id="scopeText" class="muted"></div></div><div><input id="dashDate" type="date" onchange="renderDashboard()"></div></div>
+        <div class="notice" style="margin-top:14px">
+<b>조직 Hierarchy</b> 사업담당 → 지사 → Sub → 집배점/고객사 &nbsp; | &nbsp; <b>마감 기준</b> <span id="cutoffText"></span> · 기준시간 도달 시 자동 마감되며, CJL 담당자는 필요 시 수동 마감할 수 있습니다.
+<div id="manualCloseBox" style="margin-top:10px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+  <button onclick="manualClose()">현재 시각으로 수동 마감</button>
+  <button class="secondary" onclick="clearManualClose()">수동 마감 해제</button>
+  <span id="manualCloseStatus" class="muted"></span>
+</div>
+</div>
         <div id="summary" style="margin:16px 0"></div>
-        <div style="overflow:auto"><table><thead><tr><th>지사</th><th>거점/집배점</th><th>최초</th><th>최신</th><th>증감</th><th>최종 수정</th><th>등록자</th></tr></thead><tbody id="dashBody"></tbody></table></div>
+        <div class="filters" style="grid-template-columns:1.25fr repeat(5,1fr)">
+          <div style="display:flex;gap:6px">
+      <input id="searchText" placeholder="사업담당/지사/Sub/입력처 검색" onkeydown="if(event.key==='Enter')renderDashboard()" style="min-width:220px">
+      <button type="button" onclick="renderDashboard()">검색</button>
+      <button type="button" class="secondary" onclick="resetDashboardFilters()">초기화</button>
+    </div>
+          <select id="divisionFilter" onchange="updateBranchFilter();renderDashboard()"><option value="">전체 사업담당</option></select>
+          <select id="branchFilter" onchange="updateSubFilter();renderDashboard()"><option value="">전체 지사</option></select>
+          <select id="subFilter" onchange="updatePointFilter();renderDashboard()"><option value="">전체 Sub</option></select>
+          <select id="pointFilter" onchange="renderDashboard()"><option value="">전체 입력처</option></select>
+          <select id="statusFilter" onchange="renderDashboard()"><option value="ALL">전체 상태</option><option value="MISSING">미입력</option><option value="LATE">마감 후 변경</option><option value="ABNORMAL">예측 대비 이상</option></select>
+        </div>
+        <div style="overflow:auto"><table><thead><tr><th>사업담당</th><th>지사</th><th>Sub</th><th>입력처</th><th>구분</th><th>마감값</th><th>현재 최신</th><th>상태</th><th>최종 수정</th><th>등록자</th></tr></thead><tbody id="dashBody"></tbody></table></div>
       </div>
     </section>
 
@@ -77,75 +116,281 @@ table{width:100%;border-collapse:collapse}th,td{padding:11px;border-bottom:1px s
 </div>
 <script>
 const USERS=[
- {id:'site01',name:'김현장',role:'SITE',branch:'분당지사',site:'야탑집배점'},
- {id:'site02',name:'이현장',role:'SITE',branch:'분당지사',site:'정자집배점'},
- {id:'site03',name:'박현장',role:'SITE',branch:'용인지사',site:'수지집배점'},
- {id:'branch01',name:'김수빈',role:'BRANCH',branch:'분당지사',site:null},
- {id:'cjl01',name:'CJL 담당자',role:'CJL',branch:null,site:null}
+ {id:'point01',name:'야탑집배점 담당자',role:'POINT',division:'동서울',branch:'경기광주',sub:'분당A Sub',point:'야탑집배점',pointType:'집배점'},
+ {id:'point02',name:'정자집배점 담당자',role:'POINT',division:'동서울',branch:'경기광주',sub:'분당A Sub',point:'정자집배점',pointType:'집배점'},
+ {id:'point03',name:'A고객사 담당자',role:'POINT',division:'동서울',branch:'경기광주',sub:'분당A Sub',point:'A고객사',pointType:'고객사'},
+ {id:'point04',name:'광주집배점 담당자',role:'POINT',division:'동서울',branch:'경기광주',sub:'경기광주Sub',point:'광주집배점',pointType:'집배점'},
+ {id:'point05',name:'B고객사 담당자',role:'POINT',division:'동서울',branch:'경기광주',sub:'경기광주Sub',point:'B고객사',pointType:'고객사'},
+ {id:'point06',name:'양평집배점 담당자',role:'POINT',division:'동서울',branch:'경기광주',sub:'양평 Sub',point:'양평집배점',pointType:'집배점'},
+ {id:'sub01',name:'분당A Sub 담당',role:'SUB',division:'동서울',branch:'경기광주',sub:'분당A Sub'},
+ {id:'branch01',name:'경기광주 지사담당',role:'BRANCH',division:'동서울',branch:'경기광주'},
+ {id:'division01',name:'동서울 사업담당',role:'DIVISION',division:'동서울'},
+ {id:'cjl01',name:'CJL 담당자',role:'CJL'}
 ];
 const SITES=[
- {branch:'분당지사',site:'야탑집배점'},{branch:'분당지사',site:'정자집배점'},
- {branch:'분당지사',site:'서현집배점'},{branch:'용인지사',site:'수지집배점'},
- {branch:'용인지사',site:'기흥집배점'}
+ {division:'동서울',branch:'경기광주',sub:'경기광주Sub',point:'광주집배점',pointType:'집배점'},
+ {division:'동서울',branch:'경기광주',sub:'경기광주Sub',point:'B고객사',pointType:'고객사'},
+ {division:'동서울',branch:'경기광주',sub:'분당A Sub',point:'야탑집배점',pointType:'집배점'},
+ {division:'동서울',branch:'경기광주',sub:'분당A Sub',point:'정자집배점',pointType:'집배점'},
+ {division:'동서울',branch:'경기광주',sub:'분당A Sub',point:'A고객사',pointType:'고객사'},
+ {division:'동서울',branch:'경기광주',sub:'양평 Sub',point:'양평집배점',pointType:'집배점'}
 ];
+const CUTOFF_TIME='10:00';
+const ABNORMAL_RATE=20;
+const ENGINE_FORECAST={
+ '동서울|경기광주|경기광주Sub':12000,
+ '동서울|경기광주|분당A Sub':18000,
+ '동서울|경기광주|양평 Sub':7000
+};
+
 let user=null;
 const $=id=>document.getElementById(id);
 const today=()=>{const d=new Date();return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0')};
 const fmt=n=>Number(n).toLocaleString('ko-KR');
+const forecastOf=s=>ENGINE_FORECAST[`${s.division}|${s.branch}|${s.sub}`] ?? null;
+function cutoffDate(date){const [hh,mm]=CUTOFF_TIME.split(':').map(Number);const d=new Date(date+'T00:00:00');d.setHours(hh,mm,0,0);return d}
+function isAfterCutoff(r){return new Date(r.createdAt)>effectiveCutoff(r.date)}
+function pct(actual,base){return base?((actual-base)/base*100):null}
+function pctText(v){return v==null?'-':`${v>0?'+':''}${v.toFixed(1)}%`}
+
 function records(){return JSON.parse(localStorage.getItem('dispatch_v2_records')||'[]')}
 function put(r){localStorage.setItem('dispatch_v2_records',JSON.stringify(r))}
 function init(){
- $('loginUser').innerHTML=USERS.map(u=>`<option value="${u.id}">${u.name} · ${u.role}${u.branch?' · '+u.branch:''}${u.site?' · '+u.site:''}</option>`).join('');
+ $('loginUser').innerHTML=USERS.map(u=>{
+ const scope=u.role==='POINT'?` · ${u.division} > ${u.branch} > ${u.sub} > ${u.point}`:
+  u.role==='SUB'?` · ${u.division} > ${u.branch} > ${u.sub}`:
+  u.role==='BRANCH'?` · ${u.division} > ${u.branch}`:
+  u.role==='DIVISION'?` · ${u.division}`:'';
+ return `<option value="${u.id}">${u.name}${scope}</option>`;
+}).join('');
  $('date').value=today(); $('dashDate').value=today();
 }
 function login(){
- user=USERS.find(u=>u.id===$('loginUser').value); $('loginCard').classList.add('hidden');$('app').classList.remove('hidden');
+ user=USERS.find(u=>u.id===$('loginUser').value);
+ $('loginCard').classList.add('hidden');$('app').classList.remove('hidden');
  $('who').textContent=`${user.name} · ${user.role}`;
- $('siteDisplay').value=user.role==='SITE'?`${user.branch} / ${user.site}`:(user.role==='BRANCH'?`${user.branch} 담당자`:'CJL 전체 담당자');
- $('tabInputBtn').style.display=user.role==='SITE'?'':'none';
- tab(user.role==='SITE'?'input':'dash'); refreshCurrent(); renderDashboard();renderHistory();
+ if(user.role==='POINT'){
+   $('siteDisplay').value=`${user.division} > ${user.branch} > ${user.sub} > ${user.point} (${user.pointType})`;
+ }else if(user.role==='SUB'){
+   $('siteDisplay').value=`${user.division} > ${user.branch} > ${user.sub}`;
+ }else if(user.role==='BRANCH'){
+   $('siteDisplay').value=`${user.division} > ${user.branch}`;
+ }else if(user.role==='DIVISION'){
+   $('siteDisplay').value=user.division;
+ }else{
+   $('siteDisplay').value='전체';
+ }
+ $('tabInputBtn').style.display=user.role==='POINT'?'':'none';
+ initFilters();applyRoleUI();
+ tab(user.role==='POINT'?'input':'dash');
+ refreshCurrent();renderMyHistory();renderDashboard();renderHistory();
 }
 function logout(){user=null;$('app').classList.add('hidden');$('loginCard').classList.remove('hidden');$('who').textContent=''}
 function tab(n){document.querySelectorAll('.tab').forEach(x=>x.classList.remove('active'));document.querySelectorAll('.tabs button').forEach(x=>x.classList.remove('active'));$(n).classList.add('active'); const b=$('tab'+n[0].toUpperCase()+n.slice(1)+'Btn'); if(b)b.classList.add('active'); if(n==='dash')renderDashboard();if(n==='history')renderHistory()}
 function allowed(r){
  if(user.role==='CJL')return true;
- if(user.role==='BRANCH')return r.branch===user.branch;
- return r.userId===user.id; // 현장 사용자는 '본인이 올린 데이터만'
-}
-function refreshCurrent(){
- if(!user||user.role!=='SITE')return;
- const rs=records().filter(r=>r.userId===user.id&&r.date===$('date').value).sort((a,b)=>a.createdAt.localeCompare(b.createdAt));
- if(!rs.length){$('current').textContent='미입력';$('currentMeta').textContent='';return}
- const x=rs[rs.length-1];$('current').textContent=fmt(x.volume)+'건';$('currentMeta').textContent=`${new Date(x.createdAt).toLocaleString('ko-KR')} · ${x.userName}`;
-}
-$('date').addEventListener('change',refreshCurrent);
-function saveVolume(){
- if(user.role!=='SITE')return;
- const v=Number($('volume').value); if(!Number.isFinite(v)||v<0){$('msg').innerHTML='<div class="notice danger">올바른 물량을 입력해주세요.</div>';return}
- const rs=records(); rs.push({id:crypto.randomUUID?crypto.randomUUID():String(Date.now()),date:$('date').value,branch:user.branch,site:user.site,volume:v,reason:$('reason').value,userId:user.id,userName:user.name,createdAt:new Date().toISOString()});put(rs);
- $('msg').innerHTML=`<div class="notice ok">✓ ${user.site} ${fmt(v)}건이 등록되었습니다.</div>`;$('volume').value='';refreshCurrent();renderDashboard();renderHistory();
+ if(user.role==='DIVISION')return r.division===user.division;
+ if(user.role==='BRANCH')return r.division===user.division&&r.branch===user.branch;
+ if(user.role==='SUB')return r.division===user.division&&r.branch===user.branch&&r.sub===user.sub;
+ return r.userId===user.id;
 }
 function visibleSites(){
  if(user.role==='CJL')return SITES;
- if(user.role==='BRANCH')return SITES.filter(s=>s.branch===user.branch);
- return SITES.filter(s=>s.site===user.site && s.branch===user.branch);
+ if(user.role==='DIVISION')return SITES.filter(s=>s.division===user.division);
+ if(user.role==='BRANCH')return SITES.filter(s=>s.division===user.division&&s.branch===user.branch);
+ if(user.role==='SUB')return SITES.filter(s=>s.division===user.division&&s.branch===user.branch&&s.sub===user.sub);
+ return SITES.filter(s=>s.division===user.division&&s.branch===user.branch&&s.sub===user.sub&&s.point===user.point);
+}
+
+function refreshCurrent(){
+ if(!user||user.role!=='POINT')return;
+ const d=$('date').value;
+ const rs=records().filter(r=>r.userId===user.id&&r.date===d).sort((a,b)=>a.createdAt.localeCompare(b.createdAt));
+ const last=rs.length?rs[rs.length-1]:null;
+ if(last){
+   $('current').textContent=fmt(last.volume)+'건';
+   $('currentMeta').textContent=`최종 등록 ${new Date(last.createdAt).toLocaleString('ko-KR')}${isAfterCutoff(last)?' · 마감 후 변경':''}`;
+ }else{
+   $('current').textContent='미입력';
+   $('currentMeta').textContent='';
+ }
+}
+
+function saveVolume(){
+ if(!user||user.role!=='POINT'){alert('집배점/고객사 담당자만 물량을 등록할 수 있습니다.');return}
+ const d=$('date').value;
+ const raw=$('volume').value;
+ if(!d){alert('기준일을 선택해 주세요.');return}
+ if(raw===''||Number(raw)<0||!Number.isFinite(Number(raw))){alert('예상 물량을 입력해 주세요.');$('volume').focus();return}
+ const rs=records();
+ rs.push({
+   date:d,
+   division:user.division,
+   branch:user.branch,
+   sub:user.sub,
+   site:user.point,
+   pointType:user.pointType,
+   volume:Number(raw),
+   reason:$('reason').value,
+   userId:user.id,
+   userName:user.name,
+   createdAt:new Date().toISOString()
+ });
+ put(rs);
+ alert('물량이 등록되었습니다.');
+ $('msg').innerHTML='<div class="notice"><b>등록 완료</b> · '+fmt(Number(raw))+'건이 등록되었습니다.</div>';
+ $('volume').value='';
+ $('reason').value='';
+ refreshCurrent();
+ renderMyHistory();
+}
+
+function manualCloseKey(date){return 'dispatch_manual_close_'+date}
+function getManualClose(date){const v=localStorage.getItem(manualCloseKey(date));return v?new Date(v):null}
+function effectiveCutoff(date){
+ const scheduled=cutoffDate(date), manual=getManualClose(date);
+ return manual && manual<scheduled ? manual : scheduled;
+}
+function cutoffLabel(date){
+ const scheduled=cutoffDate(date), manual=getManualClose(date), effective=effectiveCutoff(date);
+ if(manual && manual<scheduled) return `수동 마감 ${effective.toLocaleTimeString('ko-KR',{hour:'2-digit',minute:'2-digit'})} (자동 기준 ${CUTOFF_TIME})`;
+ return `자동 마감 ${CUTOFF_TIME}`;
+}
+function manualClose(){
+ if(!user||user.role!=='CJL'){alert('수동 마감은 CJL 담당자만 가능합니다.');return}
+ const date=$('dashDate').value, now=new Date(), scheduled=cutoffDate(date);
+ if(now.toDateString()!==scheduled.toDateString()){alert('PoC에서는 당일 기준 수동 마감만 가능합니다.');return}
+ if(now>=scheduled){alert(`이미 자동 마감 기준시간(${CUTOFF_TIME})이 지났습니다.`);return}
+ if(!confirm(`현재 시각(${now.toLocaleTimeString('ko-KR',{hour:'2-digit',minute:'2-digit'})})으로 ${date} 물량을 수동 마감하시겠습니까?`))return;
+ localStorage.setItem(manualCloseKey(date),now.toISOString()); renderDashboard();
+}
+function clearManualClose(){
+ if(!user||user.role!=='CJL')return;
+ const date=$('dashDate').value;
+ if(!getManualClose(date))return;
+ if(!confirm('수동 마감을 해제하고 기준시간 자동 마감으로 되돌리시겠습니까?'))return;
+ localStorage.removeItem(manualCloseKey(date)); renderDashboard();
+}
+function resetDashboardFilters(){
+ $('searchText').value='';
+ if(!$('divisionFilter').disabled)$('divisionFilter').value='';
+ updateBranchFilter();
+ if(!$('branchFilter').disabled)$('branchFilter').value='';
+ updateSubFilter();
+ if(!$('subFilter').disabled)$('subFilter').value='';
+ updatePointFilter();
+ if(!$('pointFilter').disabled)$('pointFilter').value='';
+ $('statusFilter').value='ALL';
+ renderDashboard();
+}
+function applyRoleUI(){
+ const isPoint=user&&user.role==='POINT';
+ $('tabInputBtn').style.display=isPoint?'':'none';
+ $('myHistoryTabBtn').style.display=isPoint?'':'none';
+ $('tabDashBtn').style.display=isPoint?'none':'';
+ $('tabHistoryBtn').style.display=isPoint?'none':'';
+}
+function initFilters(){
+ const base=visibleSites(), divisions=[...new Set(base.map(s=>s.division))];
+ $('divisionFilter').innerHTML='<option value="">전체 사업담당</option>'+divisions.map(v=>`<option>${v}</option>`).join('');
+ if(['DIVISION','BRANCH','SUB','POINT'].includes(user.role)){$('divisionFilter').value=user.division;$('divisionFilter').disabled=true}
+ updateBranchFilter();
+ if(['BRANCH','SUB','POINT'].includes(user.role)){$('branchFilter').value=user.branch;$('branchFilter').disabled=true;updateSubFilter()}
+ if(['SUB','POINT'].includes(user.role)){$('subFilter').value=user.sub;$('subFilter').disabled=true;updatePointFilter()}
+ if(user.role==='POINT'){$('pointFilter').value=user.point;$('pointFilter').disabled=true}
+ $('cutoffText').textContent=`자동 ${CUTOFF_TIME} / 수동 마감 지원`;
+ const box=$('manualCloseBox');if(box)box.style.display=user.role==='CJL'?'flex':'none';
+}
+function updateBranchFilter(){
+ const div=$('divisionFilter').value,cur=$('branchFilter').value;
+ const vals=[...new Set(visibleSites().filter(s=>!div||s.division===div).map(s=>s.branch))];
+ $('branchFilter').innerHTML='<option value="">전체 지사</option>'+vals.map(v=>`<option>${v}</option>`).join('');
+ if(vals.includes(cur))$('branchFilter').value=cur; updateSubFilter();
+}
+function updateSubFilter(){
+ const div=$('divisionFilter').value,br=$('branchFilter').value,cur=$('subFilter').value;
+ const vals=[...new Set(visibleSites().filter(s=>(!div||s.division===div)&&(!br||s.branch===br)).map(s=>s.sub))];
+ $('subFilter').innerHTML='<option value="">전체 Sub</option>'+vals.map(v=>`<option>${v}</option>`).join('');
+ if(vals.includes(cur))$('subFilter').value=cur; updatePointFilter();
+}
+function updatePointFilter(){
+ const div=$('divisionFilter').value,br=$('branchFilter').value,sub=$('subFilter').value,cur=$('pointFilter')?.value||'';
+ const vals=[...new Set(visibleSites().filter(s=>(!div||s.division===div)&&(!br||s.branch===br)&&(!sub||s.sub===sub)).map(s=>s.point))];
+ $('pointFilter').innerHTML='<option value="">전체 입력처</option>'+vals.map(v=>`<option>${v}</option>`).join('');
+ if(vals.includes(cur))$('pointFilter').value=cur;
 }
 function renderDashboard(){
- if(!user)return; const d=$('dashDate').value; const all=records().filter(r=>r.date===d&&allowed(r));
- $('scopeText').textContent=user.role==='CJL'?'전체 지사':user.role==='BRANCH'?`${user.branch} 소속 전체`:'내가 등록한 내용';
- const sites=visibleSites(); let rows=[]; let total=0,done=0;
- sites.forEach(s=>{
-   let rs=all.filter(r=>r.branch===s.branch&&r.site===s.site).sort((a,b)=>a.createdAt.localeCompare(b.createdAt));
-   if(!rs.length){rows.push(`<tr><td>${s.branch}</td><td>${s.site}</td><td>-</td><td><b>미입력</b></td><td>-</td><td>-</td><td>-</td></tr>`);return}
-   const f=rs[0],l=rs[rs.length-1],ch=l.volume-f.volume; total+=l.volume;done++;
-   rows.push(`<tr><td>${s.branch}</td><td>${s.site}</td><td>${fmt(f.volume)}</td><td><b>${fmt(l.volume)}</b></td><td>${ch>0?'+':''}${fmt(ch)}</td><td>${new Date(l.createdAt).toLocaleTimeString('ko-KR',{hour:'2-digit',minute:'2-digit'})}</td><td>${l.userName}</td></tr>`);
+ if(!user)return;
+ const d=$('dashDate').value, all=records().filter(r=>r.date===d&&allowed(r));
+ $('scopeText').textContent=user.role==='CJL'?'전체 사업담당 / 지사 / Sub / 입력처':
+  user.role==='DIVISION'?`${user.division} 전체`:user.role==='BRANCH'?`${user.division} > ${user.branch} 전체`:
+  user.role==='SUB'?`${user.branch} > ${user.sub} 전체 입력처`:'내 입력처';
+
+ const manual=getManualClose(d),eff=effectiveCutoff(d);
+ $('cutoffText').textContent=cutoffLabel(d);
+ const mcs=$('manualCloseStatus');if(mcs)mcs.textContent=manual&&manual<cutoffDate(d)?`현재 적용: ${eff.toLocaleTimeString('ko-KR',{hour:'2-digit',minute:'2-digit'})} 수동 마감`:`현재 적용: ${CUTOFF_TIME} 자동 마감`;
+
+ const q=($('searchText')?.value||'').trim().toLowerCase(),df=$('divisionFilter')?.value||'',bf=$('branchFilter')?.value||'',subf=$('subFilter')?.value||'',pf=$('pointFilter')?.value||'',sf=$('statusFilter')?.value||'ALL';
+ const points=visibleSites().filter(s=>(!df||s.division===df)&&(!bf||s.branch===bf)&&(!subf||s.sub===subf)&&(!pf||s.point===pf)&&(!q||(`${s.division} ${s.branch} ${s.sub} ${s.point} ${s.pointType}`).toLowerCase().includes(q)));
+
+ // point-level state
+ const states=points.map(s=>{
+   const rs=all.filter(r=>r.division===s.division&&r.branch===s.branch&&r.sub===s.sub&&r.site===s.point).sort((a,b)=>a.createdAt.localeCompare(b.createdAt));
+   const before=rs.filter(r=>!isAfterCutoff(r)),after=rs.filter(isAfterCutoff);
+   return {s,closed:before.length?before[before.length-1]:null,latest:rs.length?rs[rs.length-1]:null,hasLate:after.length>0};
  });
- $('summary').innerHTML=`<div class="grid"><div class="notice"><b>입력 완료</b><br><span class="metric">${done}/${sites.length}</span></div><div class="notice"><b>최신 합계</b><br><span class="metric">${fmt(total)}건</span></div></div>`;
- $('dashBody').innerHTML=rows.join('');
+
+ // Sub aggregation: forecast comparison is always Sub-level
+ const subMap={};
+ states.forEach(x=>{
+   const k=`${x.s.division}|${x.s.branch}|${x.s.sub}`;
+   if(!subMap[k])subMap[k]={division:x.s.division,branch:x.s.branch,sub:x.s.sub,total:0,latestTotal:0,count:0,closedCount:0};
+   const g=subMap[k];g.count++;if(x.closed){g.closedCount++;g.total+=x.closed.volume}if(x.latest)g.latestTotal+=x.latest.volume;
+ });
+ Object.values(subMap).forEach(g=>{g.forecast=forecastOf(g);g.rate=g.forecast&&g.closedCount===g.count?pct(g.total,g.forecast):null;g.abnormal=g.rate!=null&&Math.abs(g.rate)>=ABNORMAL_RATE});
+
+ let rows=[],closedTotal=0,currentTotal=0,missing=0,lateCount=0;
+ states.forEach(x=>{
+   const g=subMap[`${x.s.division}|${x.s.branch}|${x.s.sub}`],isMissing=!x.closed;
+   if(x.closed)closedTotal+=x.closed.volume;else missing++;if(x.latest)currentTotal+=x.latest.volume;if(x.hasLate)lateCount++;
+   if(sf==='MISSING'&&!isMissing)return;if(sf==='LATE'&&!x.hasLate)return;if(sf==='ABNORMAL'&&!g.abnormal)return;
+   let status=isMissing?'<span class="badge missing">미입력</span>':'<span class="badge closed">마감확정</span>';
+   if(x.hasLate)status+=' <span class="badge late">마감 후 변경</span>';
+   const lastTime=x.latest?new Date(x.latest.createdAt).toLocaleTimeString('ko-KR',{hour:'2-digit',minute:'2-digit'}):'-';
+   rows.push(`<tr class="${x.hasLate?'late-row':''}"><td>${x.s.division}</td><td>${x.s.branch}</td><td>${x.s.sub}</td><td>${x.s.point}</td><td>${x.s.pointType}</td><td>${x.closed?fmt(x.closed.volume):'-'}</td><td>${x.latest?fmt(x.latest.volume):'미입력'}</td><td>${status}</td><td>${lastTime}</td><td>${x.latest?x.latest.userName:'-'}</td></tr>`);
+ });
+
+ const groups=Object.values(subMap),completeGroups=groups.filter(g=>g.closedCount===g.count),abnormalGroups=completeGroups.filter(g=>g.abnormal);
+ const forecastSum=groups.reduce((a,g)=>a+(g.forecast||0),0),subClosedSum=completeGroups.reduce((a,g)=>a+g.total,0);
+ const subCards=groups.map(g=>{
+   const complete=g.closedCount===g.count, diff=complete&&g.forecast!=null?g.total-g.forecast:null;
+   return `<div class="notice" style="margin-top:8px"><b>${g.branch} · ${g.sub}</b><br>
+   배차예측 <b>${g.forecast==null?'-':fmt(g.forecast)}</b> / 입력처 마감합계 <b>${complete?fmt(g.total):'집계중'}</b>
+   ${complete&&g.forecast!=null?` / 차이 <span class="${g.abnormal?'abnormal':''}">${diff>0?'+':''}${fmt(diff)} (${pctText(g.rate)})</span>`:''}
+   <br><span class="muted">입력 ${g.closedCount}/${g.count}${!complete?' · 미입력 '+(g.count-g.closedCount)+'개':''}${g.abnormal?' · ⚠ 예측 이상':''}</span></div>`;
+ }).join('');
+
+ $('summary').innerHTML=`<div class="grid">
+ <div class="notice"><b>입력처 마감 현황</b><br><span class="metric">${states.length-missing}/${states.length}</span><br><span class="muted">미입력 ${missing}개 · 마감 후 변경 ${lateCount}개</span></div>
+ <div class="notice"><b>Sub 배차예측 비교</b><br><span class="metric">${completeGroups.length}/${groups.length} Sub</span><br><span class="muted">전체 입력 완료 Sub만 비교 · 예측 이상 ${abnormalGroups.length}개</span></div>
+ </div>${subCards}`;
+ $('dashBody').innerHTML=rows.length?rows.join(''):'<tr><td colspan="10">조건에 해당하는 데이터가 없습니다.</td></tr>';
+}
+function renderMyHistory(){
+ if(!user||user.role!=='POINT'||!$('myHistoryBody'))return;
+ const rs=records().filter(r=>r.userId===user.id).sort((a,b)=>b.createdAt.localeCompare(a.createdAt));
+ $('myHistoryBody').innerHTML=rs.length?rs.map(r=>{
+   const late=isAfterCutoff(r);
+   return `<tr class="${late?'late-row':''}">
+     <td>${r.date}</td><td><b>${fmt(r.volume)}</b></td><td>${r.reason||'-'}</td>
+     <td>${new Date(r.createdAt).toLocaleString('ko-KR')}</td>
+     <td>${late?'<span class="badge late">마감 후 변경</span>':'<span class="badge closed">정상 입력</span>'}</td>
+   </tr>`;
+ }).join(''):'<tr><td colspan="5">등록한 물량이 없습니다.</td></tr>';
 }
 function renderHistory(){
  if(!user)return; const rs=records().filter(allowed).sort((a,b)=>b.createdAt.localeCompare(a.createdAt));
- $('historyBody').innerHTML=rs.length?rs.map(r=>`<tr><td>${new Date(r.createdAt).toLocaleString('ko-KR')}</td><td>${r.date}</td><td>${r.branch}</td><td>${r.site}</td><td>${fmt(r.volume)}</td><td>${r.reason||'-'}</td><td>${r.userName}</td></tr>`).join(''):'<tr><td colspan="7">이력이 없습니다.</td></tr>';
+ $('historyBody').innerHTML=rs.length?rs.map(r=>`<tr><td>${new Date(r.createdAt).toLocaleString('ko-KR')}</td><td>${r.date}</td><td>${r.division||'-'}</td><td>${r.branch}</td><td>${r.sub||'-'}</td><td>${r.site}</td><td>${fmt(r.volume)}</td><td>${r.reason||'-'}</td><td>${r.userName}</td></tr>`).join(''):'<tr><td colspan="7">이력이 없습니다.</td></tr>';
 }
 init();
 </script>
