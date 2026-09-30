@@ -115,6 +115,11 @@ table{width:100%;border-collapse:collapse}th,td{padding:11px;border-bottom:1px s
       <div class="notice" style="margin-top:14px"><b>관리 범위</b> <span id="manageScope"></span><br><span class="muted">Pilot에서는 입력처별 고유 Key/Link를 사용합니다. 동일 입력처의 여러 담당자는 같은 Link를 사용할 수 있습니다.</span></div>
       <div class="grid"><div><label>입력처명</label><input id="newPointName" placeholder="예: 주안집배점"></div><div><label>구분</label><select id="newPointType"><option value="집배점">집배점</option><option value="고객사">고객사</option></select></div></div>
       <div style="margin-top:10px"><button onclick="addPoint()">입력처 추가 + 고유 Link 발급</button></div>
+<div id="linkPanel" class="notice hidden" style="margin-top:14px">
+ <b id="linkPanelTitle">입력처 고유 Link</b>
+ <div id="linkPanelValue" style="margin-top:8px;padding:10px;background:white;border:1px solid #cbd5e1;border-radius:8px;word-break:break-all;font-family:Consolas,monospace;font-size:12px"></div>
+ <div class="muted" style="margin-top:6px">위 주소를 드래그하여 복사 후 카카오톡으로 전달하세요.</div>
+</div>
       <div style="overflow:auto;margin-top:18px"><table><thead><tr><th>입력처</th><th>구분</th><th>상태</th><th>최근 입력</th><th>고유 Key</th><th>관리</th></tr></thead><tbody id="manageBody"></tbody></table></div>
       </div>
     </section>
@@ -148,11 +153,34 @@ const SITES=[
 ];
 function siteKey(s){return [s.division,s.branch,s.sub,s.point].join('|')}
 function seedPointMaster(){
- if(localStorage.getItem('dispatch_point_master'))return;
- const initial=SITES.map(function(s,i){return Object.assign({},s,{active:true,token:'PILOT-'+String(i+1).padStart(3,'0')+'-'+Math.random().toString(36).slice(2,10)});});
- localStorage.setItem('dispatch_point_master',JSON.stringify(initial));
+ let existing=[];
+ try{
+   const raw=localStorage.getItem('dispatch_point_master');
+   existing=raw?JSON.parse(raw):[];
+   if(!Array.isArray(existing))existing=[];
+ }catch(e){existing=[]}
+ const merged=existing.slice();
+ SITES.forEach(function(base,i){
+   const found=merged.find(function(x){return siteKey(x)===siteKey(base)});
+   if(!found){
+     merged.push(Object.assign({},base,{active:true,token:'PILOT-'+String(i+1).padStart(3,'0')+'-'+Math.random().toString(36).slice(2,10)}));
+   }else{
+     if(typeof found.active==='undefined')found.active=true;
+     if(!found.token)found.token='PILOT-'+String(i+1).padStart(3,'0')+'-'+Math.random().toString(36).slice(2,10);
+     if(!found.pointType)found.pointType=base.pointType;
+   }
+ });
+ localStorage.setItem('dispatch_point_master',JSON.stringify(merged));
 }
-function pointMaster(){seedPointMaster();return JSON.parse(localStorage.getItem('dispatch_point_master')||'[]')}
+function pointMaster(){
+ try{
+   seedPointMaster();
+   const v=JSON.parse(localStorage.getItem('dispatch_point_master')||'[]');
+   return Array.isArray(v)?v:[];
+ }catch(e){
+   return SITES.map(function(s,i){return Object.assign({},s,{active:true,token:'PILOT-'+String(i+1).padStart(3,'0')})});
+ }
+}
 function savePointMaster(v){localStorage.setItem('dispatch_point_master',JSON.stringify(v))}
 function activePointMaster(){return pointMaster().filter(function(s){return s.active!==false})}
 
@@ -315,15 +343,44 @@ function applyRoleUI(){
  $('tabManageBtn').style.display=user&&user.role==='SUB'?'':'none';
 }
 function initFilters(){
- const base=visibleSites(), divisions=[...new Set(base.map(s=>s.division))];
- $('divisionFilter').innerHTML='<option value="">전체 사업담당</option>'+divisions.map(v=>`<option>${v}</option>`).join('');
- if(['DIVISION','BRANCH','SUB','POINT'].includes(user.role)){$('divisionFilter').value=user.division;$('divisionFilter').disabled=true}
- updateBranchFilter();
- if(['BRANCH','SUB','POINT'].includes(user.role)){$('branchFilter').value=user.branch;$('branchFilter').disabled=true;updateSubFilter()}
- if(['SUB','POINT'].includes(user.role)){$('subFilter').value=user.sub;$('subFilter').disabled=true;updatePointFilter()}
- if(user.role==='POINT'){$('pointFilter').value=user.point;$('pointFilter').disabled=true}
- $('cutoffText').textContent=`자동 ${CUTOFF_TIME} / 수동 마감 지원`;
- const box=$('manualCloseBox');if(box)box.style.display=user.role==='CJL'?'flex':'none';
+  const base=visibleSites(), divisions=[...new Set(base.map(s=>s.division))];
+  $('divisionFilter').disabled=false;
+  $('branchFilter').disabled=false;
+  $('subFilter').disabled=false;
+  $('pointFilter').disabled=false;
+
+  $('divisionFilter').innerHTML='<option value="">전체 사업담당</option>'+divisions.map(v=>`<option>${v}</option>`).join('');
+  if(['DIVISION','BRANCH','SUB','POINT'].includes(user.role)){
+    $('divisionFilter').value=user.division;
+    $('divisionFilter').disabled=true;
+  }
+
+  updateBranchFilter();
+  if(['BRANCH','SUB','POINT'].includes(user.role)){
+    $('branchFilter').value=user.branch;
+    $('branchFilter').disabled=true;
+    updateSubFilter();
+  }
+
+  if(['SUB','POINT'].includes(user.role)){
+    $('subFilter').value=user.sub;
+    $('subFilter').disabled=true;
+    updatePointFilter();
+  }
+
+  // 핵심 수정:
+  // SUB 담당자는 자기 Sub 전체 입력처를 조회해야 하므로 pointFilter는 '전체 입력처'가 기본값.
+  // POINT 사용자만 자기 입력처로 고정한다.
+  if(user.role==='POINT'){
+    $('pointFilter').value=user.point;
+    $('pointFilter').disabled=true;
+  }else{
+    $('pointFilter').value='';
+    $('pointFilter').disabled=false;
+  }
+
+  $('cutoffText').textContent=`자동 ${CUTOFF_TIME} / 수동 마감 지원`;
+  const box=$('manualCloseBox');if(box)box.style.display=user.role==='CJL'?'flex':'none';
 }
 function updateBranchFilter(){
  const div=$('divisionFilter').value,cur=$('branchFilter').value;
@@ -354,7 +411,15 @@ function addPoint(){
 }
 function regenerateToken(k){if(!confirm('기존 Link를 무효화하고 새 Link를 발급하시겠습니까?'))return;const list=pointMaster(),s=list.find(x=>siteKey(x)===k);if(!s)return;s.token=makeToken();savePointMaster(list);renderPointManagement()}
 function togglePoint(k){const list=pointMaster(),s=list.find(x=>siteKey(x)===k);if(!s)return;s.active=s.active===false;savePointMaster(list);renderPointManagement();initFilters();renderDashboard()}
-function showPointLink(k){const s=pointMaster().find(x=>siteKey(x)===k);if(!s)return;const link=location.href.split('?')[0].split('#')[0]+'?token='+encodeURIComponent(s.token);prompt('아래 Link를 복사해 카카오톡으로 전달하세요.',link)}
+function showPointLink(k){
+ const s=pointMaster().find(function(x){return siteKey(x)===k});
+ if(!s){alert('입력처 정보를 찾을 수 없습니다.');return}
+ const base=location.href.split('?')[0].split('#')[0];
+ const link=base+'?token='+encodeURIComponent(s.token);
+ $('linkPanelTitle').textContent=s.point+' ('+(s.pointType||'-')+') 고유 Link';
+ $('linkPanelValue').textContent=link;
+ $('linkPanel').classList.remove('hidden');
+}
 function renderPointManagement(){
  if(!user||user.role!=='SUB'||!$('manageBody'))return;
  $('manageScope').textContent=user.division+' > '+user.branch+' > '+user.sub;
