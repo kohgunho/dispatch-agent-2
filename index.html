@@ -26,6 +26,7 @@ table{width:100%;border-collapse:collapse}th,td{padding:11px;border-bottom:1px s
 .abnormal{font-weight:800;color:#b91c1c}.late-row{background:#fff7ed}
 @media(max-width:700px){.filters{grid-template-columns:1fr}}
 @media(max-width:700px){.grid{grid-template-columns:1fr}.wrap{padding:12px}.top{align-items:flex-start;flex-direction:column}table{min-width:700px}}
+.manage-actions{display:flex;gap:6px;flex-wrap:wrap}.manage-actions button{padding:7px 9px;font-size:12px}.token{font-family:monospace;font-size:11px;color:#64748b}.inactive-row{opacity:.55;background:#f8fafc}
 </style>
 </head>
 <body>
@@ -46,6 +47,7 @@ table{width:100%;border-collapse:collapse}th,td{padding:11px;border-bottom:1px s
 <button id="myHistoryTabBtn" onclick="tab('myHistory');renderMyHistory()">내 입력 현황</button>
       <button id="tabDashBtn" onclick="tab('dash')">현황</button>
       <button id="tabHistoryBtn" onclick="tab('history')">변경 이력</button>
+      <button id="tabManageBtn" onclick="tab('manage')">입력처 관리</button>
       <button class="secondary" onclick="logout()">사용자 변경</button>
     </div>
 
@@ -107,6 +109,15 @@ table{width:100%;border-collapse:collapse}th,td{padding:11px;border-bottom:1px s
       </div>
     </section>
 
+
+    <section id="manage" class="tab">
+      <div class="card"><h2>입력처 관리</h2><div class="muted">Sub 담당자가 자기 Sub의 집배점/고객사를 관리합니다.</div>
+      <div class="notice" style="margin-top:14px"><b>관리 범위</b> <span id="manageScope"></span><br><span class="muted">Pilot에서는 입력처별 고유 Key/Link를 사용합니다. 동일 입력처의 여러 담당자는 같은 Link를 사용할 수 있습니다.</span></div>
+      <div class="grid"><div><label>입력처명</label><input id="newPointName" placeholder="예: 주안집배점"></div><div><label>구분</label><select id="newPointType"><option value="집배점">집배점</option><option value="고객사">고객사</option></select></div></div>
+      <div style="margin-top:10px"><button onclick="addPoint()">입력처 추가 + 고유 Link 발급</button></div>
+      <div style="overflow:auto;margin-top:18px"><table><thead><tr><th>입력처</th><th>구분</th><th>상태</th><th>최근 입력</th><th>고유 Key</th><th>관리</th></tr></thead><tbody id="manageBody"></tbody></table></div>
+      </div>
+    </section>
     <section id="history" class="tab">
       <div class="card"><h2>변경 이력</h2><div class="muted" style="margin-bottom:12px">권한 범위 내 이력만 표시됩니다.</div>
         <div style="overflow:auto"><table><thead><tr><th>일시</th><th>기준일</th><th>지사</th><th>거점</th><th>물량</th><th>사유</th><th>등록자</th></tr></thead><tbody id="historyBody"></tbody></table></div>
@@ -135,6 +146,16 @@ const SITES=[
  {division:'동서울',branch:'경기광주',sub:'분당A Sub',point:'A고객사',pointType:'고객사'},
  {division:'동서울',branch:'경기광주',sub:'양평 Sub',point:'양평집배점',pointType:'집배점'}
 ];
+function siteKey(s){return [s.division,s.branch,s.sub,s.point].join('|')}
+function seedPointMaster(){
+ if(localStorage.getItem('dispatch_point_master'))return;
+ const initial=SITES.map(function(s,i){return Object.assign({},s,{active:true,token:'PILOT-'+String(i+1).padStart(3,'0')+'-'+Math.random().toString(36).slice(2,10)});});
+ localStorage.setItem('dispatch_point_master',JSON.stringify(initial));
+}
+function pointMaster(){seedPointMaster();return JSON.parse(localStorage.getItem('dispatch_point_master')||'[]')}
+function savePointMaster(v){localStorage.setItem('dispatch_point_master',JSON.stringify(v))}
+function activePointMaster(){return pointMaster().filter(function(s){return s.active!==false})}
+
 const CUTOFF_TIME='10:00';
 const ABNORMAL_RATE=20;
 const ENGINE_FORECAST={
@@ -156,6 +177,7 @@ function pctText(v){return v==null?'-':`${v>0?'+':''}${v.toFixed(1)}%`}
 function records(){return JSON.parse(localStorage.getItem('dispatch_v2_records')||'[]')}
 function put(r){localStorage.setItem('dispatch_v2_records',JSON.stringify(r))}
 function init(){
+ seedPointMaster();
  $('loginUser').innerHTML=USERS.map(u=>{
  const scope=u.role==='POINT'?` · ${u.division} > ${u.branch} > ${u.sub} > ${u.point}`:
   u.role==='SUB'?` · ${u.division} > ${u.branch} > ${u.sub}`:
@@ -186,7 +208,7 @@ function login(){
  refreshCurrent();renderMyHistory();renderDashboard();renderHistory();
 }
 function logout(){user=null;$('app').classList.add('hidden');$('loginCard').classList.remove('hidden');$('who').textContent=''}
-function tab(n){document.querySelectorAll('.tab').forEach(x=>x.classList.remove('active'));document.querySelectorAll('.tabs button').forEach(x=>x.classList.remove('active'));$(n).classList.add('active'); const b=$('tab'+n[0].toUpperCase()+n.slice(1)+'Btn'); if(b)b.classList.add('active'); if(n==='dash')renderDashboard();if(n==='history')renderHistory()}
+function tab(n){document.querySelectorAll('.tab').forEach(x=>x.classList.remove('active'));document.querySelectorAll('.tabs button').forEach(x=>x.classList.remove('active'));$(n).classList.add('active'); const b=$('tab'+n[0].toUpperCase()+n.slice(1)+'Btn'); if(b)b.classList.add('active'); if(n==='dash')renderDashboard();if(n==='history')renderHistory();if(n==='manage')renderPointManagement()}
 function allowed(r){
  if(user.role==='CJL')return true;
  if(user.role==='DIVISION')return r.division===user.division;
@@ -195,11 +217,12 @@ function allowed(r){
  return r.userId===user.id;
 }
 function visibleSites(){
- if(user.role==='CJL')return SITES;
- if(user.role==='DIVISION')return SITES.filter(s=>s.division===user.division);
- if(user.role==='BRANCH')return SITES.filter(s=>s.division===user.division&&s.branch===user.branch);
- if(user.role==='SUB')return SITES.filter(s=>s.division===user.division&&s.branch===user.branch&&s.sub===user.sub);
- return SITES.filter(s=>s.division===user.division&&s.branch===user.branch&&s.sub===user.sub&&s.point===user.point);
+ const base=activePointMaster();
+ if(user.role==='CJL')return base;
+ if(user.role==='DIVISION')return base.filter(s=>s.division===user.division);
+ if(user.role==='BRANCH')return base.filter(s=>s.division===user.division&&s.branch===user.branch);
+ if(user.role==='SUB')return base.filter(s=>s.division===user.division&&s.branch===user.branch&&s.sub===user.sub);
+ return base.filter(s=>s.division===user.division&&s.branch===user.branch&&s.sub===user.sub&&s.point===user.point);
 }
 
 function refreshCurrent(){
@@ -289,6 +312,7 @@ function applyRoleUI(){
  $('myHistoryTabBtn').style.display=isPoint?'':'none';
  $('tabDashBtn').style.display=isPoint?'none':'';
  $('tabHistoryBtn').style.display=isPoint?'none':'';
+ $('tabManageBtn').style.display=user&&user.role==='SUB'?'':'none';
 }
 function initFilters(){
  const base=visibleSites(), divisions=[...new Set(base.map(s=>s.division))];
@@ -319,6 +343,25 @@ function updatePointFilter(){
  $('pointFilter').innerHTML='<option value="">전체 입력처</option>'+vals.map(v=>`<option>${v}</option>`).join('');
  if(vals.includes(cur))$('pointFilter').value=cur;
 }
+
+function makeToken(){return 'PILOT-'+Math.random().toString(36).slice(2,8).toUpperCase()+Math.random().toString(36).slice(2,8).toUpperCase()}
+function manageableSites(){if(!user||user.role!=='SUB')return [];return pointMaster().filter(s=>s.division===user.division&&s.branch===user.branch&&s.sub===user.sub)}
+function addPoint(){
+ if(!user||user.role!=='SUB'){alert('Sub 담당자만 입력처를 관리할 수 있습니다.');return}
+ const name=$('newPointName').value.trim(),type=$('newPointType').value;if(!name){alert('입력처명을 입력해 주세요.');return}
+ const list=pointMaster();if(list.some(s=>s.division===user.division&&s.branch===user.branch&&s.sub===user.sub&&s.point===name)){alert('동일한 입력처가 이미 등록되어 있습니다.');return}
+ list.push({division:user.division,branch:user.branch,sub:user.sub,point:name,pointType:type,active:true,token:makeToken()});savePointMaster(list);$('newPointName').value='';renderPointManagement();initFilters();renderDashboard();alert('입력처가 등록되고 고유 Link가 발급되었습니다.');
+}
+function regenerateToken(k){if(!confirm('기존 Link를 무효화하고 새 Link를 발급하시겠습니까?'))return;const list=pointMaster(),s=list.find(x=>siteKey(x)===k);if(!s)return;s.token=makeToken();savePointMaster(list);renderPointManagement()}
+function togglePoint(k){const list=pointMaster(),s=list.find(x=>siteKey(x)===k);if(!s)return;s.active=s.active===false;savePointMaster(list);renderPointManagement();initFilters();renderDashboard()}
+function showPointLink(k){const s=pointMaster().find(x=>siteKey(x)===k);if(!s)return;const link=location.href.split('?')[0].split('#')[0]+'?token='+encodeURIComponent(s.token);prompt('아래 Link를 복사해 카카오톡으로 전달하세요.',link)}
+function renderPointManagement(){
+ if(!user||user.role!=='SUB'||!$('manageBody'))return;
+ $('manageScope').textContent=user.division+' > '+user.branch+' > '+user.sub;
+ const rs=records(),list=manageableSites();
+ $('manageBody').innerHTML=list.length?list.map(s=>{const last=rs.filter(r=>r.division===s.division&&r.branch===s.branch&&r.sub===s.sub&&r.site===s.point).sort((a,b)=>b.createdAt.localeCompare(a.createdAt))[0];const k=siteKey(s);return `<tr class="${s.active===false?'inactive-row':''}"><td><b>${s.point}</b></td><td>${s.pointType}</td><td>${s.active===false?'<span class="badge missing">중지</span>':'<span class="badge closed">사용</span>'}</td><td>${last?last.date+' / '+fmt(last.volume)+'건':'-'}</td><td><span class="token">${s.token}</span></td><td><div class="manage-actions"><button onclick="showPointLink('${k}')">링크 보기</button><button class="secondary" onclick="regenerateToken('${k}')">재발급</button><button class="secondary" onclick="togglePoint('${k}')">${s.active===false?'사용':'중지'}</button></div></td></tr>`}).join(''):'<tr><td colspan="6">등록된 입력처가 없습니다.</td></tr>';
+}
+
 function renderDashboard(){
  if(!user)return;
  const d=$('dashDate').value, all=records().filter(r=>r.date===d&&allowed(r));
