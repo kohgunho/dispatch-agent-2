@@ -105,7 +105,7 @@ table{width:100%;border-collapse:collapse}th,td{padding:11px;border-bottom:1px s
           <select id="pointFilter" onchange="renderDashboard()"><option value="">전체 입력처</option></select>
           <select id="statusFilter" onchange="renderDashboard()"><option value="ALL">전체 상태</option><option value="MISSING">미입력</option><option value="LATE">마감 후 변경</option><option value="ABNORMAL">예측 대비 이상</option></select>
         </div>
-        <div style="overflow:auto"><table><thead><tr><th>사업담당</th><th>지사</th><th>Sub</th><th>입력처</th><th>구분</th><th>마감값</th><th>현재 최신</th><th>상태</th><th>최종 수정</th><th>등록자</th></tr></thead><tbody id="dashBody"></tbody></table></div>
+        <div style="overflow:auto"><table><thead><tr><th>사업담당</th><th>지사</th><th>Sub</th><th>입력처</th><th>구분</th><th>마감값</th><th>현재 최신</th><th>상태</th><th>최종 수정</th></tr></thead><tbody id="dashBody"></tbody></table></div>
       </div>
     </section>
 
@@ -125,7 +125,7 @@ table{width:100%;border-collapse:collapse}th,td{padding:11px;border-bottom:1px s
     </section>
     <section id="history" class="tab">
       <div class="card"><h2>변경 이력</h2><div class="muted" style="margin-bottom:12px">권한 범위 내 이력만 표시됩니다.</div>
-        <div style="overflow:auto"><table><thead><tr><th>일시</th><th>기준일</th><th>지사</th><th>거점</th><th>물량</th><th>사유</th><th>등록자</th></tr></thead><tbody id="historyBody"></tbody></table></div>
+        <div style="overflow:auto"><table><thead><tr><th>일시</th><th>기준일</th><th>사업담당</th><th>지사</th><th>Sub</th><th>입력처</th><th>물량</th><th>변경사유</th></tr></thead><tbody id="historyBody"></tbody></table></div>
       </div>
     </section>
   </div>
@@ -435,6 +435,8 @@ function renderDashboard(){
   user.role==='SUB'?`${user.branch} > ${user.sub} 전체 입력처`:'내 입력처';
 
  const manual=getManualClose(d),eff=effectiveCutoff(d);
+ const now=new Date();
+ const cutoffReached=now>=eff;
  $('cutoffText').textContent=cutoffLabel(d);
  const mcs=$('manualCloseStatus');if(mcs)mcs.textContent=manual&&manual<cutoffDate(d)?`현재 적용: ${eff.toLocaleTimeString('ko-KR',{hour:'2-digit',minute:'2-digit'})} 수동 마감`:`현재 적용: ${CUTOFF_TIME} 자동 마감`;
 
@@ -445,7 +447,8 @@ function renderDashboard(){
  const states=points.map(s=>{
    const rs=all.filter(r=>r.division===s.division&&r.branch===s.branch&&r.sub===s.sub&&r.site===s.point).sort((a,b)=>a.createdAt.localeCompare(b.createdAt));
    const before=rs.filter(r=>!isAfterCutoff(r)),after=rs.filter(isAfterCutoff);
-   return {s,closed:before.length?before[before.length-1]:null,latest:rs.length?rs[rs.length-1]:null,hasLate:after.length>0};
+   const cutoffValue=cutoffReached&&before.length?before[before.length-1]:null;
+   return {s,closed:cutoffValue,latest:rs.length?rs[rs.length-1]:null,hasLate:cutoffReached&&after.length>0};
  });
 
  // Sub aggregation: forecast comparison is always Sub-level
@@ -459,13 +462,17 @@ function renderDashboard(){
 
  let rows=[],closedTotal=0,currentTotal=0,missing=0,lateCount=0;
  states.forEach(x=>{
-   const g=subMap[`${x.s.division}|${x.s.branch}|${x.s.sub}`],isMissing=!x.closed;
-   if(x.closed)closedTotal+=x.closed.volume;else missing++;if(x.latest)currentTotal+=x.latest.volume;if(x.hasLate)lateCount++;
+   const g=subMap[`${x.s.division}|${x.s.branch}|${x.s.sub}`],isMissing=cutoffReached?!x.closed:!x.latest;
+   if(x.closed)closedTotal+=x.closed.volume;
+   if(isMissing)missing++;
+   if(x.latest)currentTotal+=x.latest.volume;
+   if(x.hasLate)lateCount++;
    if(sf==='MISSING'&&!isMissing)return;if(sf==='LATE'&&!x.hasLate)return;if(sf==='ABNORMAL'&&!g.abnormal)return;
-   let status=isMissing?'<span class="badge missing">미입력</span>':'<span class="badge closed">마감확정</span>';
+   let status=isMissing?'<span class="badge missing">미입력</span>':
+     cutoffReached?'<span class="badge closed">마감확정</span>':'<span class="badge closed">입력완료</span>';
    if(x.hasLate)status+=' <span class="badge late">마감 후 변경</span>';
    const lastTime=x.latest?new Date(x.latest.createdAt).toLocaleTimeString('ko-KR',{hour:'2-digit',minute:'2-digit'}):'-';
-   rows.push(`<tr class="${x.hasLate?'late-row':''}"><td>${x.s.division}</td><td>${x.s.branch}</td><td>${x.s.sub}</td><td>${x.s.point}</td><td>${x.s.pointType}</td><td>${x.closed?fmt(x.closed.volume):'-'}</td><td>${x.latest?fmt(x.latest.volume):'미입력'}</td><td>${status}</td><td>${lastTime}</td><td>${x.latest?x.latest.userName:'-'}</td></tr>`);
+   rows.push(`<tr class="${x.hasLate?'late-row':''}"><td>${x.s.division}</td><td>${x.s.branch}</td><td>${x.s.sub}</td><td>${x.s.point}</td><td>${x.s.pointType}</td><td>${x.closed?fmt(x.closed.volume):'-'}</td><td>${x.latest?fmt(x.latest.volume):'미입력'}</td><td>${status}</td><td>${lastTime}</td></tr>`);
  });
 
  const groups=Object.values(subMap),completeGroups=groups.filter(g=>g.closedCount===g.count),abnormalGroups=completeGroups.filter(g=>g.abnormal);
@@ -482,7 +489,7 @@ function renderDashboard(){
  <div class="notice"><b>입력처 마감 현황</b><br><span class="metric">${states.length-missing}/${states.length}</span><br><span class="muted">미입력 ${missing}개 · 마감 후 변경 ${lateCount}개</span></div>
  <div class="notice"><b>Sub 배차예측 비교</b><br><span class="metric">${completeGroups.length}/${groups.length} Sub</span><br><span class="muted">전체 입력 완료 Sub만 비교 · 예측 이상 ${abnormalGroups.length}개</span></div>
  </div>${subCards}`;
- $('dashBody').innerHTML=rows.length?rows.join(''):'<tr><td colspan="10">조건에 해당하는 데이터가 없습니다.</td></tr>';
+ $('dashBody').innerHTML=rows.length?rows.join(''):'<tr><td colspan="9">조건에 해당하는 데이터가 없습니다.</td></tr>';
 }
 function renderMyHistory(){
  if(!user||user.role!=='POINT'||!$('myHistoryBody'))return;
@@ -497,8 +504,9 @@ function renderMyHistory(){
  }).join(''):'<tr><td colspan="5">등록한 물량이 없습니다.</td></tr>';
 }
 function renderHistory(){
- if(!user)return; const rs=records().filter(allowed).sort((a,b)=>b.createdAt.localeCompare(a.createdAt));
- $('historyBody').innerHTML=rs.length?rs.map(r=>`<tr><td>${new Date(r.createdAt).toLocaleString('ko-KR')}</td><td>${r.date}</td><td>${r.division||'-'}</td><td>${r.branch}</td><td>${r.sub||'-'}</td><td>${r.site}</td><td>${fmt(r.volume)}</td><td>${r.reason||'-'}</td><td>${r.userName}</td></tr>`).join(''):'<tr><td colspan="7">이력이 없습니다.</td></tr>';
+ if(!user)return;
+ const rs=records().filter(allowed).sort((a,b)=>b.createdAt.localeCompare(a.createdAt));
+ $('historyBody').innerHTML=rs.length?rs.map(r=>`<tr><td>${new Date(r.createdAt).toLocaleString('ko-KR')}</td><td>${r.date}</td><td>${r.division||'-'}</td><td>${r.branch||'-'}</td><td>${r.sub||'-'}</td><td>${r.site||'-'}</td><td>${fmt(r.volume)}</td><td>${r.reason||'-'}</td></tr>`).join(''):'<tr><td colspan="8">이력이 없습니다.</td></tr>';
 }
 init();
 </script>
